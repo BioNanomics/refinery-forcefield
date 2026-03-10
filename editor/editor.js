@@ -105,6 +105,8 @@ function loadFieldImage(field) {
     if (infoEl) {
         infoEl.textContent = `${FIELD_W.toFixed(2)}m × ${FIELD_H.toFixed(2)}m  |  Blue alliance origin (bottom-left)`;
     }
+    // Toggle obstacle button availability
+    updateObstaclesButton();
     fieldImageReady = false;
     fieldImage = new Image();
     fieldImage.onload = () => {
@@ -925,6 +927,10 @@ document.getElementById("btn-add-radial").addEventListener("click", () => {
     });
 });
 
+// Field-element presets
+document.getElementById("btn-add-walls").addEventListener("click", addWalls);
+document.getElementById("btn-add-obstacles").addEventListener("click", addObstacles);
+
 document.getElementById("chk-robot-preview").addEventListener("change", e => {
     showRobotPreview = e.target.checked;
     draw();
@@ -933,6 +939,21 @@ document.getElementById("chk-robot-preview").addEventListener("change", e => {
 document.getElementById("btn-zoom-in").addEventListener("click", () => { scale *= 1.2; draw(); });
 document.getElementById("btn-zoom-out").addEventListener("click", () => { scale /= 1.2; draw(); });
 document.getElementById("btn-zoom-fit").addEventListener("click", () => { fitToWindow(); draw(); });
+
+// Pinch-to-zoom (trackpad / touch) — zoom toward the cursor position
+canvas.addEventListener("wheel", e => {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    const factor = e.deltaY < 0 ? 1.05 : 1 / 1.05;
+    // Zoom toward cursor: adjust offset so the field point under the cursor stays fixed
+    const newScale = scale * factor;
+    offsetX = cx - (cx - offsetX) * (newScale / scale);
+    offsetY = cy - (cy - offsetY) * (newScale / scale);
+    scale = newScale;
+    draw();
+}, { passive: false });
 
 // Map settings
 ["map-name", "gain-force", "gain-torque", "gain-max-vel", "gain-max-torque"].forEach(id => {
@@ -1028,10 +1049,92 @@ document.addEventListener("keydown", e => {
     if (e.key === "p") { mode = "point"; lineDragStart = null; refreshUI(); }
     if (e.key === "l") { mode = "line"; lineDragStart = null; refreshUI(); }
     if (e.key === "r") { mode = "radial"; lineDragStart = null; refreshUI(); }
+    // Arrow key panning
+    const PAN_PX = 40;
+    if (e.key === "ArrowLeft")  { e.preventDefault(); offsetX += PAN_PX; draw(); }
+    if (e.key === "ArrowRight") { e.preventDefault(); offsetX -= PAN_PX; draw(); }
+    if (e.key === "ArrowUp")    { e.preventDefault(); offsetY += PAN_PX; draw(); }
+    if (e.key === "ArrowDown")  { e.preventDefault(); offsetY -= PAN_PX; draw(); }
 });
 
 // ── Helpers ───────────────────────────────────────────────────
 function round2(v) { return Math.round(v * 100) / 100; }
+
+// ── Known game obstacles (coordinates in meters, WPILib blue-origin) ──
+/**
+ * Factory functions keyed by year.  Each returns an array of charge objects
+ * representing the major fixed obstacles robots cannot drive through.
+ * Coordinates come from WPILib AprilTag layouts and FIRST field drawings.
+ */
+const GAME_OBSTACLES = {
+    2025: function reefscapeObstacles() {
+        // 2025 REEFSCAPE — two reef hexagons (blue + red side)
+        // Regular hexagon: apothem ≈ 0.832 m, circumradius ≈ 0.961 m
+        // Derived from AprilTag face-center positions on the reef.
+        const R = 0.961;
+        const reefs = [
+            { cx: 4.490, cy: 4.026, prefix: "reef_blue" },
+            { cx: 13.058, cy: 4.026, prefix: "reef_red" },
+        ];
+        const out = [];
+        for (const reef of reefs) {
+            for (let i = 0; i < 6; i++) {
+                const a1 = (30 + 60 * i) * Math.PI / 180;
+                const a2 = (30 + 60 * (i + 1)) * Math.PI / 180;
+                out.push({
+                    type: "line", id: `${reef.prefix}_edge${i}`,
+                    x1: round2(reef.cx + R * Math.cos(a1)),
+                    y1: round2(reef.cy + R * Math.sin(a1)),
+                    x2: round2(reef.cx + R * Math.cos(a2)),
+                    y2: round2(reef.cy + R * Math.sin(a2)),
+                    strength: -3.0, falloffDistance: 0.5,
+                });
+            }
+        }
+        return out;
+    },
+};
+
+/** Add 4 repulsive line charges along the field perimeter. */
+function addWalls() {
+    const wallIds = ["wall_bottom", "wall_top", "wall_left", "wall_right"];
+    // Remove existing walls (by id prefix) to allow re-generation on field switch
+    charges = charges.filter(c => !wallIds.includes(c.id));
+    charges.push(
+        { type: "line", id: "wall_bottom", x1: 0, y1: 0, x2: round2(FIELD_W), y2: 0, strength: -3.0, falloffDistance: 0.75 },
+        { type: "line", id: "wall_top",    x1: 0, y1: round2(FIELD_H), x2: round2(FIELD_W), y2: round2(FIELD_H), strength: -3.0, falloffDistance: 0.75 },
+        { type: "line", id: "wall_left",   x1: 0, y1: 0, x2: 0, y2: round2(FIELD_H), strength: -3.0, falloffDistance: 0.75 },
+        { type: "line", id: "wall_right",  x1: round2(FIELD_W), y1: 0, x2: round2(FIELD_W), y2: round2(FIELD_H), strength: -3.0, falloffDistance: 0.75 },
+    );
+    selectedIdx = charges.length - 4; // select first wall
+    refreshUI(); draw();
+}
+
+/** Add known game obstacles for the currently selected field year. */
+function addObstacles() {
+    if (!currentField) return;
+    const factory = GAME_OBSTACLES[currentField.year];
+    if (!factory) return;
+    const newObstacles = factory();
+    // Remove existing obstacles with matching id prefixes to allow re-generation
+    const newIds = new Set(newObstacles.map(c => c.id));
+    charges = charges.filter(c => !newIds.has(c.id));
+    charges.push(...newObstacles);
+    selectedIdx = charges.length - newObstacles.length;
+    refreshUI(); draw();
+}
+
+/** Enable / disable the obstacles button based on the selected field year. */
+function updateObstaclesButton() {
+    const btn = document.getElementById("btn-add-obstacles");
+    if (currentField && GAME_OBSTACLES[currentField.year]) {
+        btn.disabled = false;
+        btn.title = `Add ${currentField.game} obstacles`;
+    } else {
+        btn.disabled = true;
+        btn.title = "No known obstacles for this field year";
+    }
+}
 
 // ── Init ──────────────────────────────────────────────────────
 async function init() {
