@@ -71,7 +71,8 @@ const HEX_REPULSE   = "#f9e2af";
 
 // ── State ─────────────────────────────────────────────────────
 let charges = [];
-let selectedIdx = -1;
+let selectedIdx = -1;       // primary selection (for props panel & drag handles)
+let selectedSet = new Set(); // all selected indices (for highlighting & bulk ops)
 let mode = "select";    // select | point | line | radial
 let vizMode = "arrows"; // arrows | heatmap | none
 let showRobotPreview = true;
@@ -88,9 +89,9 @@ const MAX_HISTORY = 100;
 let undoStack = [];   // past snapshots
 let redoStack = [];   // future snapshots (cleared on new mutations)
 
-/** Deep-clone the charges array + selectedIdx into a snapshot. */
+/** Deep-clone the charges array + selection into a snapshot. */
 function takeSnapshot() {
-    return { charges: JSON.parse(JSON.stringify(charges)), selectedIdx };
+    return { charges: JSON.parse(JSON.stringify(charges)), selectedIdx, selectedSet: new Set(selectedSet) };
 }
 
 /** Save current state before a mutation. Clears the redo stack. */
@@ -105,6 +106,33 @@ function pushUndo() {
 function restoreSnapshot(snap) {
     charges = snap.charges;
     selectedIdx = snap.selectedIdx;
+    selectedSet = snap.selectedSet ? new Set(snap.selectedSet) : new Set(selectedIdx >= 0 ? [selectedIdx] : []);
+}
+
+/** Select a single charge (clears previous selection). */
+function selectSingle(idx) {
+    selectedIdx = idx;
+    selectedSet.clear();
+    if (idx >= 0) selectedSet.add(idx);
+}
+
+/** Toggle an index in/out of the selection set (shift‑click). */
+function toggleSelect(idx) {
+    if (idx < 0) return;
+    if (selectedSet.has(idx)) {
+        selectedSet.delete(idx);
+        // Update primary: pick another member or -1
+        selectedIdx = selectedSet.size > 0 ? [...selectedSet][selectedSet.size - 1] : -1;
+    } else {
+        selectedSet.add(idx);
+        selectedIdx = idx;
+    }
+}
+
+/** Clear all selection state. */
+function clearSelection() {
+    selectedIdx = -1;
+    selectedSet.clear();
 }
 
 function undo() {
@@ -138,6 +166,31 @@ let mapSettings = {
     maxForceVelocity: 2.0,
     maxForceTorque: 1.5,
 };
+
+// ── LocalStorage persistence ──────────────────────────────────
+const LS_KEY = "forcefield_editor_state";
+
+function saveToLocalStorage() {
+    try {
+        const state = { charges, mapSettings };
+        localStorage.setItem(LS_KEY, JSON.stringify(state));
+    } catch (_) { /* quota exceeded or private browsing — ignore */ }
+}
+
+function loadFromLocalStorage() {
+    try {
+        const raw = localStorage.getItem(LS_KEY);
+        if (!raw) return false;
+        const state = JSON.parse(raw);
+        if (Array.isArray(state.charges)) charges = state.charges;
+        if (state.mapSettings) Object.assign(mapSettings, state.mapSettings);
+        return true;
+    } catch (_) { return false; }
+}
+
+function clearLocalStorage() {
+    localStorage.removeItem(LS_KEY);
+}
 
 // ── Field image loading ───────────────────────────────────────
 function loadFieldImage(field) {
@@ -310,7 +363,7 @@ function drawField() {
 
 function drawCharges() {
     charges.forEach((c, i) => {
-        const isSel = i === selectedIdx;
+        const isSel = selectedSet.has(i);
         const alpha = isSel ? 1.0 : 0.7;
 
         if (c.type === "point") {
@@ -715,7 +768,7 @@ canvas.addEventListener("mousedown", e => {
             x: round2(fx), y: round2(fy),
             strength: 2.0, falloff: "gaussian", sigma: 0.5,
         });
-        selectedIdx = charges.length - 1;
+        selectSingle(charges.length - 1);
         refreshUI();
     } else if (mode === "radial") {
         pushUndo();
@@ -724,7 +777,7 @@ canvas.addEventListener("mousedown", e => {
             x: round2(fx), y: round2(fy),
             innerRadius: 0.3, outerRadius: 1.5, strength: 3.0,
         });
-        selectedIdx = charges.length - 1;
+        selectSingle(charges.length - 1);
         refreshUI();
     } else if (mode === "line") {
         if (!lineDragStart) {
@@ -738,6 +791,7 @@ canvas.addEventListener("mousedown", e => {
             pushUndo();  // save state before drag begins
             isDragging = true;
             dragTarget = handle;
+            if (!selectedSet.has(handle.index)) selectSingle(handle.index);
             selectedIdx = handle.index;
             const c = charges[handle.index];
             // Compute offset so the charge doesn't "snap" to cursor
@@ -757,7 +811,12 @@ canvas.addEventListener("mousedown", e => {
             canvas.style.cursor = "grabbing";
             refreshUI();
         } else {
-            selectedIdx = findClickedCharge(fx, fy);
+            const clicked = findClickedCharge(fx, fy);
+            if (e.shiftKey && clicked >= 0) {
+                toggleSelect(clicked);
+            } else {
+                selectSingle(clicked);
+            }
             refreshUI();
         }
     }
@@ -785,7 +844,7 @@ canvas.addEventListener("mouseup", e => {
                 x2: round2(cp.x), y2: round2(cp.y),
                 strength: -3.0, falloffDistance: 1.0,
             });
-            selectedIdx = charges.length - 1;
+            selectSingle(charges.length - 1);
         }
         lineDragStart = null;
         refreshUI();
@@ -831,6 +890,7 @@ function refreshUI() {
     updateChargeList();
     updatePropsPanel();
     updateModeButtons();
+    saveToLocalStorage();
 }
 
 function updateChargeList() {
@@ -838,7 +898,7 @@ function updateChargeList() {
     list.innerHTML = "";
     charges.forEach((c, i) => {
         const div = document.createElement("div");
-        div.className = "charge-item" + (i === selectedIdx ? " selected" : "");
+        div.className = "charge-item" + (selectedSet.has(i) ? " selected" : "");
         div.innerHTML = `
             <span>
                 <span class="type-badge ${c.type}">${c.type}</span>
@@ -851,7 +911,11 @@ function updateChargeList() {
         `;
         div.addEventListener("click", e => {
             if (e.target.classList.contains("delete-btn")) return;
-            selectedIdx = i;
+            if (e.shiftKey) {
+                toggleSelect(i);
+            } else {
+                selectSingle(i);
+            }
             refreshUI();
             draw();
         });
@@ -859,7 +923,15 @@ function updateChargeList() {
             e.stopPropagation();
             pushUndo();
             charges.splice(i, 1);
-            if (selectedIdx >= charges.length) selectedIdx = charges.length - 1;
+            // Rebuild selectedSet — indices above i shifted down by 1
+            const newSet = new Set();
+            for (const s of selectedSet) {
+                if (s < i) newSet.add(s);
+                else if (s > i) newSet.add(s - 1);
+                // s === i is removed
+            }
+            selectedSet = newSet;
+            selectedIdx = selectedSet.size > 0 ? [...selectedSet][selectedSet.size - 1] : -1;
             refreshUI();
             draw();
         });
@@ -871,7 +943,7 @@ function updateChargeList() {
 function updatePropsPanel() {
     const panel = document.getElementById("props-panel");
     const grid = document.getElementById("props-grid");
-    if (selectedIdx < 0 || selectedIdx >= charges.length) {
+    if (selectedSet.size !== 1 || selectedIdx < 0 || selectedIdx >= charges.length) {
         panel.style.display = "none";
         return;
     }
@@ -1022,6 +1094,7 @@ canvas.addEventListener("wheel", e => {
         mapSettings.torqueGain = parseFloat(document.getElementById("gain-torque").value) || 0.5;
         mapSettings.maxForceVelocity = parseFloat(document.getElementById("gain-max-vel").value) || 2;
         mapSettings.maxForceTorque = parseFloat(document.getElementById("gain-max-torque").value) || 1.5;
+        saveToLocalStorage();
     });
 });
 
@@ -1068,7 +1141,7 @@ document.getElementById("file-input").addEventListener("change", e => {
             document.getElementById("gain-torque").value = mapSettings.torqueGain;
             document.getElementById("gain-max-vel").value = mapSettings.maxForceVelocity;
             document.getElementById("gain-max-torque").value = mapSettings.maxForceTorque;
-            selectedIdx = -1;
+            clearSelection();
             refreshUI();
             draw();
         } catch (err) {
@@ -1083,7 +1156,25 @@ document.getElementById("btn-clear").addEventListener("click", () => {
     if (confirm("Delete all charges?")) {
         pushUndo();
         charges = [];
-        selectedIdx = -1;
+        clearSelection();
+        refreshUI();
+        draw();
+    }
+});
+
+document.getElementById("btn-reset").addEventListener("click", () => {
+    if (confirm("Reset editor to defaults? This will clear all charges, settings, and undo history.")) {
+        clearLocalStorage();
+        charges = [];
+        mapSettings = { name: "Default Field", forceGain: 1.0, torqueGain: 0.5, maxForceVelocity: 2.0, maxForceTorque: 1.5 };
+        undoStack = []; redoStack = [];
+        clearSelection();
+        document.getElementById("map-name").value = mapSettings.name;
+        document.getElementById("gain-force").value = mapSettings.forceGain;
+        document.getElementById("gain-torque").value = mapSettings.torqueGain;
+        document.getElementById("gain-max-vel").value = mapSettings.maxForceVelocity;
+        document.getElementById("gain-max-torque").value = mapSettings.maxForceTorque;
+        updateUndoRedoButtons();
         refreshUI();
         draw();
     }
@@ -1093,10 +1184,12 @@ document.getElementById("btn-clear").addEventListener("click", () => {
 document.addEventListener("keydown", e => {
     if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
     if (e.key === "Delete" || e.key === "Backspace") {
-        if (selectedIdx >= 0) {
+        if (selectedSet.size > 0) {
             pushUndo();
-            charges.splice(selectedIdx, 1);
-            selectedIdx = Math.min(selectedIdx, charges.length - 1);
+            // Delete selected indices in descending order to keep indices stable
+            const sorted = [...selectedSet].sort((a, b) => b - a);
+            for (const idx of sorted) charges.splice(idx, 1);
+            clearSelection();
             refreshUI();
             draw();
         }
@@ -1108,10 +1201,40 @@ document.addEventListener("keydown", e => {
     if ((e.metaKey || e.ctrlKey) && (e.key === "Z" || e.key === "y")) {
         e.preventDefault(); redo();
     }
+    // Duplicate-mirror selected charges about the field center (Ctrl/Cmd+D)
+    if ((e.metaKey || e.ctrlKey) && e.key === "d") {
+        e.preventDefault();
+        if (selectedSet.size > 0) {
+            pushUndo();
+            const cx = FIELD_W / 2, cy = FIELD_H / 2;
+            const newIndices = [];
+            for (const idx of selectedSet) {
+                const orig = charges[idx];
+                const dup = JSON.parse(JSON.stringify(orig));
+                dup.id = orig.id + "_mirror";
+                if (dup.type === "point" || dup.type === "radial") {
+                    dup.x = round2(2 * cx - orig.x);
+                    dup.y = round2(2 * cy - orig.y);
+                } else if (dup.type === "line") {
+                    dup.x1 = round2(2 * cx - orig.x1);
+                    dup.y1 = round2(2 * cy - orig.y1);
+                    dup.x2 = round2(2 * cx - orig.x2);
+                    dup.y2 = round2(2 * cy - orig.y2);
+                }
+                charges.push(dup);
+                newIndices.push(charges.length - 1);
+            }
+            // Select the newly created mirrored charges
+            selectedSet.clear();
+            newIndices.forEach(i => selectedSet.add(i));
+            selectedIdx = newIndices[newIndices.length - 1];
+            refreshUI(); draw();
+        }
+    }
     if (e.key === "Escape") {
         mode = "select";
         lineDragStart = null;
-        selectedIdx = -1;
+        clearSelection();
         refreshUI();
         draw();
     }
@@ -1176,7 +1299,7 @@ function addWalls() {
         { type: "line", id: "wall_left",   x1: 0, y1: 0, x2: 0, y2: round2(FIELD_H), strength: -3.0, falloffDistance: 0.75 },
         { type: "line", id: "wall_right",  x1: round2(FIELD_W), y1: 0, x2: round2(FIELD_W), y2: round2(FIELD_H), strength: -3.0, falloffDistance: 0.75 },
     );
-    selectedIdx = charges.length - 4; // select first wall
+    selectSingle(charges.length - 4); // select first wall
     refreshUI(); draw();
 }
 
@@ -1191,7 +1314,7 @@ function addObstacles() {
     const newIds = new Set(newObstacles.map(c => c.id));
     charges = charges.filter(c => !newIds.has(c.id));
     charges.push(...newObstacles);
-    selectedIdx = charges.length - newObstacles.length;
+    selectSingle(charges.length - newObstacles.length);
     refreshUI(); draw();
 }
 
@@ -1216,6 +1339,16 @@ async function init() {
     }
     populateFieldSelector();
     if (FIELDS.length > 0) loadFieldImage(FIELDS[0]);
+
+    // Restore saved state from localStorage
+    if (loadFromLocalStorage()) {
+        document.getElementById("map-name").value = mapSettings.name;
+        document.getElementById("gain-force").value = mapSettings.forceGain;
+        document.getElementById("gain-torque").value = mapSettings.torqueGain;
+        document.getElementById("gain-max-vel").value = mapSettings.maxForceVelocity;
+        document.getElementById("gain-max-torque").value = mapSettings.maxForceTorque;
+    }
+
     resize();
     refreshUI();
 }
