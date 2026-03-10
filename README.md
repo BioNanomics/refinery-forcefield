@@ -6,6 +6,39 @@ ForceField lets you place invisible charges on the field — walls that repel, s
 
 > Part of **The REFINERY** by [BioNanomics](https://github.com/BioNanomics) — tools and libraries for FRC teams.
 
+## Coordinate System
+
+ForceField uses the **WPILib standard coordinate system**, which is shared by all major FRC tools:
+
+| Property | Convention |
+|----------|------------|
+| **Origin** | Blue alliance corner (bottom-left viewed from above) |
+| **+X** | Toward red alliance wall (down-field) |
+| **+Y** | Toward far side wall (cross-field) |
+| **Rotation** | Counter-clockwise positive, 0° = toward +X |
+| **Units** | Meters, radians |
+
+This is the same coordinate system used by:
+
+- **[WPILib](https://docs.wpilib.org/en/stable/docs/software/basic-programming/coordinate-system.html)** — the standard FRC framework ("Always Blue Origin")
+- **[Choreo](https://choreo.autos)** — trajectory optimization tool by SleipnirGroup
+- **[PathPlanner](https://pathplanner.dev)** — path planning and auto builder by mjansen4857
+
+All three tools define paths and positions in blue-origin coordinates and flip at runtime for the red alliance. Charges placed in the ForceField editor use the same coordinates — no conversion is needed.
+
+### Field Dimensions by Year
+
+Field dimensions vary slightly between seasons. The editor loads calibrated dimensions from [WPILib's field image metadata](https://github.com/wpilibsuite/allwpilib/tree/main/fieldImages/src/main/native/resources/edu/wpi/first/fields):
+
+| Year | Game | Width (m) | Height (m) | Source |
+|------|------|-----------|------------|--------|
+| 2026 | REBUILT | 16.541 | 8.069 | `2026-rebuilt.json` |
+| 2025 | REEFSCAPE | 17.548 | 8.052 | `2025-reefscape.json` |
+| 2024 | Crescendo | 16.542 | 8.211 | `2024-crescendo.json` |
+| 2023 | Charged Up | 16.542 | 8.014 | `2023-chargedup.json` |
+
+> **Note:** The 2025 REEFSCAPE field is wider than other years due to its game-specific layout. The editor adapts automatically when you switch field years.
+
 ## How It Works
 
 ```mermaid
@@ -253,9 +286,28 @@ com.bionanomics.refinery.forcefield
 
 ## Web Editor
 
-A visual field editor for designing and testing presets is available separately:
+A visual field editor is included in the `editor/` directory for designing and testing presets. Serve locally with:
 
-**[REFINERY ForceField Editor](https://github.com/BioNanomics/refinery)** — drag-and-drop placement of charges on the FRC field with real-time force visualization.
+```sh
+cd editor && python3 -m http.server 8765
+```
+
+Then open [http://localhost:8765](http://localhost:8765).
+
+Features:
+- Drag-and-drop placement of point, line, and radial charges
+- Real-time force arrow and heatmap visualization
+- Robot preview overlay with swerve module corners
+- Export/import JSON presets (same format used by `ForceFieldMap`)
+- **Multi-year field images** — switch between FRC seasons via dropdown
+
+### Adding a New Field Year
+
+1. Download the field PNG and calibration JSON from [WPILib's field images](https://github.com/wpilibsuite/allwpilib/tree/main/fieldImages/src/main/native/resources/edu/wpi/first/fields)
+2. Drop both files into `editor/fields/`
+3. Add the JSON filename to `editor/fields/manifest.json`
+
+The editor reads each WPILib JSON's `field-corners` and `field-size` to calibrate the image precisely to field coordinates — no manual pixel mapping needed.
 
 ## Requirements
 

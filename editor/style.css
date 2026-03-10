@@ -165,6 +165,19 @@ button.danger { background: #f38ba8; color: #1e1e2e; border-color: #f38ba8; }
 
 #toolbar .spacer { flex: 1; }
 
+#field-select {
+    background: #313244;
+    color: #cdd6f4;
+    border: 1px solid #45475a;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 13px;
+    cursor: pointer;
+    font-weight: 600;
+}
+#field-select:hover { border-color: #cba6f7; }
+#field-select option { background: #1e1e2e; }
+
 #canvas-container {
     flex: 1;
     position: relative;

@@ -21,7 +21,12 @@ refinery-forcefield/
 ├── editor/                           ← web-based visual preset editor (HTML/JS/CSS)
 │   ├── index.html
 │   ├── style.css
-│   └── editor.js
+│   ├── editor.js
+│   └── fields/                       ← WPILib field images + calibration JSONs
+│       ├── manifest.json             ← ordered list of field JSON filenames
+│       ├── 2026-rebuilt.json         ← WPILib calibration (field-corners, field-size)
+│       ├── 2026-field.png
+│       └── ...                       ← one JSON + one PNG per season
 ├── src/main/java/com/bionanomics/refinery/forcefield/
 │   ├── Charge.java                   ← interface: evaluate(point) → force vector
 │   ├── PointCharge.java              ← gaussian / inverse falloff from a point
@@ -114,11 +119,13 @@ Presets live in the consuming robot project at `src/main/deploy/forcefield/*.jso
 ## Web Editor (`editor/`)
 - Standalone HTML/JS/CSS — no build step, no dependencies
 - Catppuccin Mocha dark theme
-- FRC field canvas (16.54m × 8.21m, blue alliance origin bottom-left)
+- FRC field canvas with dynamic dimensions per season (calibrated from WPILib field-size metadata)
 - Color scheme: **green** = attractor, **yellow** = repulsor (avoids FRC red/blue alliance confusion)
 - Supports drag-to-move for all charge types
 - Drag handles: purple = center/endpoints, yellow = outer radius / sigma, green = inner radius
 - Exports/imports the same JSON format consumed by `ForceFieldMap`
+- **Field images**: loaded dynamically from `editor/fields/manifest.json` → WPILib calibration JSONs
+  - To add a new season: drop a `YYYY-game.json` + `YYYY-field.png` into `editor/fields/`, add the JSON filename to `manifest.json`
 - Serve locally with `python3 -m http.server 8765` from the `editor/` directory
 - Planned: GitHub Pages deployment under BioNanomics
 
@@ -188,10 +195,14 @@ dependencies {
 ## Quick Reference
 
 ### Coordinate System
+- **Standard**: WPILib "Always Blue Origin" — shared with Choreo and PathPlanner
 - **Origin**: Blue alliance corner (bottom-left when viewed from above)
-- **X**: Toward red alliance wall (0 → 16.54m)
-- **Y**: Toward far side wall (0 → 8.21m)
+- **X**: Toward red alliance wall (0 → ~16.54m, varies by year)
+- **Y**: Toward far side wall (0 → ~8.07m, varies by year)
 - **Rotation**: CCW-positive, 0° = toward red alliance wall
+- **Units**: Meters, radians
+- **References**: [WPILib docs](https://docs.wpilib.org/en/stable/docs/software/basic-programming/coordinate-system.html), [Choreo](https://choreo.autos), [PathPlanner](https://pathplanner.dev)
+- Field dimensions are dynamic per season — derived from WPILib's field-size calibration JSON
 
 ### Typical Tuning Ranges
 | Parameter | Range | Notes |

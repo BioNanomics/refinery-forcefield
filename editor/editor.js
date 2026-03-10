@@ -2,8 +2,56 @@
 "use strict";
 
 // ── Field dimensions (meters) ─────────────────────────────────
-const FIELD_W = 16.54;
-const FIELD_H = 8.21;
+// Dynamic — updated when the user switches field year via the dropdown.
+// Derived from WPILib's field-size calibration (feet → meters).
+let FIELD_W = 16.541;   // default: 2026 REBUILT
+let FIELD_H = 8.069;
+
+// ── FRC Field Images ──────────────────────────────────────────
+// To add a new season:
+//   1. Drop a WPILib field JSON + field PNG into editor/fields/
+//   2. Add the JSON filename to editor/fields/manifest.json
+//
+// The editor fetches fields/manifest.json at startup, loads each
+// referenced JSON, and builds the field list dynamically. Calibration
+// data (field-corners, field-size) comes from the WPILib JSON —
+// no need to duplicate it here.
+const FT_TO_M = 0.3048;
+let FIELDS = [];       // populated by loadFieldManifest()
+
+/** Fetch manifest → fetch each WPILib JSON → populate FIELDS array. */
+async function loadFieldManifest() {
+    const resp = await fetch("fields/manifest.json");
+    if (!resp.ok) throw new Error(`Failed to load fields/manifest.json (${resp.status})`);
+    const filenames = await resp.json();  // e.g. ["2026-rebuilt.json", ...]
+
+    const entries = await Promise.all(filenames.map(async (name) => {
+        try {
+            const r = await fetch(`fields/${name}`);
+            if (!r.ok) { console.warn(`Skipping ${name}: HTTP ${r.status}`); return null; }
+            const j = await r.json();
+            const yearMatch = name.match(/^(\d{4})/);
+            return {
+                year:         yearMatch ? parseInt(yearMatch[1]) : 0,
+                game:         j["game"] || name,
+                imageUrl:     `fields/${j["field-image"]}`,
+                fieldCorners: {
+                    topLeft:     j["field-corners"]["top-left"],
+                    bottomRight: j["field-corners"]["bottom-right"],
+                },
+                fieldSizeFt:  j["field-size"],
+            };
+        } catch (err) {
+            console.warn(`Skipping ${name}:`, err);
+            return null;
+        }
+    }));
+    FIELDS = entries.filter(Boolean);
+}
+
+let currentField = null;
+let fieldImage = null;       // loaded Image element (or null)
+let fieldImageReady = false; // true once image has loaded
 
 // Robot corner offsets (meters) from TunerConstants — FL, FR, BL, BR
 const ROBOT_CORNERS = [
@@ -43,6 +91,49 @@ let mapSettings = {
     maxForceVelocity: 2.0,
     maxForceTorque: 1.5,
 };
+
+// ── Field image loading ───────────────────────────────────────
+function loadFieldImage(field) {
+    currentField = field;
+    // Update field dimensions from calibration data
+    if (field.fieldSizeFt) {
+        FIELD_W = +(field.fieldSizeFt[0] * FT_TO_M).toFixed(3);
+        FIELD_H = +(field.fieldSizeFt[1] * FT_TO_M).toFixed(3);
+    }
+    // Update toolbar info text
+    const infoEl = document.getElementById("field-info");
+    if (infoEl) {
+        infoEl.textContent = `${FIELD_W.toFixed(2)}m × ${FIELD_H.toFixed(2)}m  |  Blue alliance origin (bottom-left)`;
+    }
+    fieldImageReady = false;
+    fieldImage = new Image();
+    fieldImage.onload = () => {
+        fieldImageReady = true;
+        draw();
+    };
+    fieldImage.onerror = () => {
+        console.warn(`Field image not found: ${field.imageUrl} — using plain field`);
+        fieldImageReady = false;
+        fieldImage = null;
+        draw();
+    };
+    fieldImage.src = field.imageUrl;
+}
+
+function populateFieldSelector() {
+    const sel = document.getElementById("field-select");
+    sel.innerHTML = "";
+    FIELDS.forEach((f, i) => {
+        const opt = document.createElement("option");
+        opt.value = i;
+        opt.textContent = `${f.year} ${f.game}`;
+        sel.appendChild(opt);
+    });
+    sel.value = 0;
+    sel.addEventListener("change", () => {
+        loadFieldImage(FIELDS[parseInt(sel.value)]);
+    });
+}
 
 // ── Canvas setup ──────────────────────────────────────────────
 const canvas = document.getElementById("field-canvas");
@@ -92,13 +183,45 @@ function draw() {
 function drawField() {
     const tl = fieldToCanvas(0, FIELD_H);
     const br = fieldToCanvas(FIELD_W, 0);
+    const fw = br.x - tl.x;
+    const fh = br.y - tl.y;
+
     // Field background
     ctx.fillStyle = "#2a2a3a";
-    ctx.fillRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+    ctx.fillRect(tl.x, tl.y, fw, fh);
+
+    // Field image (if loaded) — calibrated via WPILib field-corners metadata
+    if (fieldImageReady && fieldImage && currentField.fieldCorners) {
+        const fc = currentField.fieldCorners;
+        const fsz = currentField.fieldSizeFt;
+        // Pixels-per-meter within the calibrated region of the image
+        const imgFieldW_m = fsz[0] * FT_TO_M;
+        const imgFieldH_m = fsz[1] * FT_TO_M;
+        const cornersPxW = fc.bottomRight[0] - fc.topLeft[0];
+        const cornersPxH = fc.bottomRight[1] - fc.topLeft[1];
+        const ppm_x = cornersPxW / imgFieldW_m;  // image px per meter (x)
+        const ppm_y = cornersPxH / imgFieldH_m;  // image px per meter (y)
+        // Source rectangle in image pixels that maps to [0,0]→[FIELD_W, FIELD_H]
+        const sx = fc.topLeft[0];
+        const sy = fc.topLeft[1];
+        const sw = FIELD_W * ppm_x;
+        const sh = FIELD_H * ppm_y;
+        ctx.save();
+        ctx.globalAlpha = 0.65;
+        ctx.drawImage(fieldImage, sx, sy, sw, sh, tl.x, tl.y, fw, fh);
+        ctx.restore();
+    } else if (fieldImageReady && fieldImage) {
+        // Fallback: no calibration data — stretch entire image
+        ctx.save();
+        ctx.globalAlpha = 0.65;
+        ctx.drawImage(fieldImage, tl.x, tl.y, fw, fh);
+        ctx.restore();
+    }
+
     // Border
     ctx.strokeStyle = "#585b70";
     ctx.lineWidth = 2;
-    ctx.strokeRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+    ctx.strokeRect(tl.x, tl.y, fw, fh);
     // Center line
     const cl = fieldToCanvas(FIELD_W / 2, 0);
     const ct = fieldToCanvas(FIELD_W / 2, FIELD_H);
@@ -123,15 +246,17 @@ function drawField() {
         const q = fieldToCanvas(FIELD_W, y);
         ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
     }
-    // Alliance labels
-    ctx.font = "bold 14px sans-serif";
-    ctx.fillStyle = "#89b4fa66";
-    ctx.textAlign = "center";
-    const blueLabel = fieldToCanvas(1.5, FIELD_H / 2);
-    ctx.fillText("BLUE", blueLabel.x, blueLabel.y);
-    ctx.fillStyle = "#f38ba866";
-    const redLabel = fieldToCanvas(FIELD_W - 1.5, FIELD_H / 2);
-    ctx.fillText("RED", redLabel.x, redLabel.y);
+    // Alliance labels (only when no field image, to avoid clutter)
+    if (!fieldImageReady) {
+        ctx.font = "bold 14px sans-serif";
+        ctx.fillStyle = "#89b4fa66";
+        ctx.textAlign = "center";
+        const blueLabel = fieldToCanvas(1.5, FIELD_H / 2);
+        ctx.fillText("BLUE", blueLabel.x, blueLabel.y);
+        ctx.fillStyle = "#f38ba866";
+        const redLabel = fieldToCanvas(FIELD_W - 1.5, FIELD_H / 2);
+        ctx.fillText("RED", redLabel.x, redLabel.y);
+    }
 }
 
 function drawCharges() {
@@ -912,5 +1037,15 @@ document.addEventListener("keydown", e => {
 function round2(v) { return Math.round(v * 100) / 100; }
 
 // ── Init ──────────────────────────────────────────────────────
-resize();
-refreshUI();
+async function init() {
+    try {
+        await loadFieldManifest();
+    } catch (err) {
+        console.error("Could not load field manifest:", err);
+    }
+    populateFieldSelector();
+    if (FIELDS.length > 0) loadFieldImage(FIELDS[0]);
+    resize();
+    refreshUI();
+}
+init();
