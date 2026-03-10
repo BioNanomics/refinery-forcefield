@@ -666,7 +666,6 @@ canvas.addEventListener("mousedown", e => {
             strength: 2.0, falloff: "gaussian", sigma: 0.5,
         });
         selectedIdx = charges.length - 1;
-        mode = "select";
         refreshUI();
     } else if (mode === "radial") {
         charges.push({
@@ -675,7 +674,6 @@ canvas.addEventListener("mousedown", e => {
             innerRadius: 0.3, outerRadius: 1.5, strength: 3.0,
         });
         selectedIdx = charges.length - 1;
-        mode = "select";
         refreshUI();
     } else if (mode === "line") {
         if (!lineDragStart) {
@@ -737,7 +735,6 @@ canvas.addEventListener("mouseup", e => {
             selectedIdx = charges.length - 1;
         }
         lineDragStart = null;
-        mode = "select";
         refreshUI();
         draw();
     }
