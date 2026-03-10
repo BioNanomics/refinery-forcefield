@@ -53,15 +53,27 @@ let currentField = null;
 let fieldImage = null;       // loaded Image element (or null)
 let fieldImageReady = false; // true once image has loaded
 
-// Robot corner offsets (meters) from TunerConstants — FL, FR, BL, BR
-const ROBOT_CORNERS = [
-    { x:  0.276, y:  0.257 },  // FL  (10.875", 10.125")
-    { x:  0.276, y: -0.257 },  // FR
-    { x: -0.276, y:  0.257 },  // BL
-    { x: -0.276, y: -0.257 },  // BR
-];
-const ROBOT_W = 0.552;  // 2 × 0.276
-const ROBOT_H = 0.514;  // 2 × 0.257
+// Robot dimensions (meters) — configurable from the sidebar
+let robotWidth  = 0.552;  // default 2 × 0.276 (~21.75")
+let robotHeight = 0.514;  // default 2 × 0.257 (~20.25")
+let ROBOT_CORNERS = [];
+let ROBOT_W = robotWidth;
+let ROBOT_H = robotHeight;
+
+function updateRobotSize(w, h) {
+    robotWidth  = w;
+    robotHeight = h;
+    ROBOT_W = w;
+    ROBOT_H = h;
+    const hw = w / 2, hh = h / 2;
+    ROBOT_CORNERS = [
+        { x:  hw, y:  hh },  // FL
+        { x:  hw, y: -hh },  // FR
+        { x: -hw, y:  hh },  // BL
+        { x: -hw, y: -hh },  // BR
+    ];
+}
+updateRobotSize(robotWidth, robotHeight);  // initialize
 
 // Charge colors — green = attractor, yellow = repulsor (avoids FRC red/blue alliance confusion)
 const COLOR_ATTRACT = "166,227,161";   // #a6e3a1  (Catppuccin green)
@@ -172,7 +184,7 @@ const LS_KEY = "forcefield_editor_state";
 
 function saveToLocalStorage() {
     try {
-        const state = { charges, mapSettings };
+        const state = { charges, mapSettings, robotWidth, robotHeight };
         localStorage.setItem(LS_KEY, JSON.stringify(state));
     } catch (_) { /* quota exceeded or private browsing — ignore */ }
 }
@@ -184,6 +196,9 @@ function loadFromLocalStorage() {
         const state = JSON.parse(raw);
         if (Array.isArray(state.charges)) charges = state.charges;
         if (state.mapSettings) Object.assign(mapSettings, state.mapSettings);
+        if (state.robotWidth != null && state.robotHeight != null) {
+            updateRobotSize(state.robotWidth, state.robotHeight);
+        }
         return true;
     } catch (_) { return false; }
 }
@@ -1065,6 +1080,17 @@ document.getElementById("chk-robot-preview").addEventListener("change", e => {
     draw();
 });
 
+// Robot size inputs
+["robot-width", "robot-height"].forEach(id => {
+    document.getElementById(id).addEventListener("input", () => {
+        const w = parseFloat(document.getElementById("robot-width").value) || 0.552;
+        const h = parseFloat(document.getElementById("robot-height").value) || 0.514;
+        updateRobotSize(w, h);
+        saveToLocalStorage();
+        draw();
+    });
+});
+
 document.getElementById("btn-zoom-in").addEventListener("click", () => { scale *= 1.2; draw(); });
 document.getElementById("btn-zoom-out").addEventListener("click", () => { scale /= 1.2; draw(); });
 document.getElementById("btn-zoom-fit").addEventListener("click", () => { fitToWindow(); draw(); });
@@ -1167,6 +1193,7 @@ document.getElementById("btn-reset").addEventListener("click", () => {
         clearLocalStorage();
         charges = [];
         mapSettings = { name: "Default Field", forceGain: 1.0, torqueGain: 0.5, maxForceVelocity: 2.0, maxForceTorque: 1.5 };
+        updateRobotSize(0.552, 0.514);
         undoStack = []; redoStack = [];
         clearSelection();
         document.getElementById("map-name").value = mapSettings.name;
@@ -1174,6 +1201,8 @@ document.getElementById("btn-reset").addEventListener("click", () => {
         document.getElementById("gain-torque").value = mapSettings.torqueGain;
         document.getElementById("gain-max-vel").value = mapSettings.maxForceVelocity;
         document.getElementById("gain-max-torque").value = mapSettings.maxForceTorque;
+        document.getElementById("robot-width").value = robotWidth;
+        document.getElementById("robot-height").value = robotHeight;
         updateUndoRedoButtons();
         refreshUI();
         draw();
@@ -1347,6 +1376,8 @@ async function init() {
         document.getElementById("gain-torque").value = mapSettings.torqueGain;
         document.getElementById("gain-max-vel").value = mapSettings.maxForceVelocity;
         document.getElementById("gain-max-torque").value = mapSettings.maxForceTorque;
+        document.getElementById("robot-width").value = robotWidth;
+        document.getElementById("robot-height").value = robotHeight;
     }
 
     resize();
