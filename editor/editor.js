@@ -83,6 +83,53 @@ let isDragging = false;
 let dragTarget = null;  // { index, handle } — handle: 'center' | 'p1' | 'p2' | 'mid'
 let dragOffset = { x: 0, y: 0 };  // offset from handle to click point
 
+// ── Undo / Redo ───────────────────────────────────────────────
+const MAX_HISTORY = 100;
+let undoStack = [];   // past snapshots
+let redoStack = [];   // future snapshots (cleared on new mutations)
+
+/** Deep-clone the charges array + selectedIdx into a snapshot. */
+function takeSnapshot() {
+    return { charges: JSON.parse(JSON.stringify(charges)), selectedIdx };
+}
+
+/** Save current state before a mutation. Clears the redo stack. */
+function pushUndo() {
+    undoStack.push(takeSnapshot());
+    if (undoStack.length > MAX_HISTORY) undoStack.shift();
+    redoStack = [];
+    updateUndoRedoButtons();
+}
+
+/** Restore a snapshot into live state. */
+function restoreSnapshot(snap) {
+    charges = snap.charges;
+    selectedIdx = snap.selectedIdx;
+}
+
+function undo() {
+    if (undoStack.length === 0) return;
+    redoStack.push(takeSnapshot());
+    restoreSnapshot(undoStack.pop());
+    refreshUI(); draw();
+    updateUndoRedoButtons();
+}
+
+function redo() {
+    if (redoStack.length === 0) return;
+    undoStack.push(takeSnapshot());
+    restoreSnapshot(redoStack.pop());
+    refreshUI(); draw();
+    updateUndoRedoButtons();
+}
+
+function updateUndoRedoButtons() {
+    const btnUndo = document.getElementById("btn-undo");
+    const btnRedo = document.getElementById("btn-redo");
+    if (btnUndo) btnUndo.disabled = undoStack.length === 0;
+    if (btnRedo) btnRedo.disabled = redoStack.length === 0;
+}
+
 // Map-level settings
 let mapSettings = {
     name: "Default Field",
@@ -662,6 +709,7 @@ canvas.addEventListener("mousedown", e => {
     const fx = cp.x, fy = cp.y;
 
     if (mode === "point") {
+        pushUndo();
         charges.push({
             type: "point", id: `point_${charges.length}`,
             x: round2(fx), y: round2(fy),
@@ -670,6 +718,7 @@ canvas.addEventListener("mousedown", e => {
         selectedIdx = charges.length - 1;
         refreshUI();
     } else if (mode === "radial") {
+        pushUndo();
         charges.push({
             type: "radial", id: `radial_${charges.length}`,
             x: round2(fx), y: round2(fy),
@@ -686,6 +735,7 @@ canvas.addEventListener("mousedown", e => {
         // Select mode: try drag handle first, then fall back to selection
         const handle = findDragHandle(fx, fy);
         if (handle) {
+            pushUndo();  // save state before drag begins
             isDragging = true;
             dragTarget = handle;
             selectedIdx = handle.index;
@@ -728,6 +778,7 @@ canvas.addEventListener("mouseup", e => {
         const cp = canvasToField(e.clientX - rect.left, e.clientY - rect.top);
         const dist = Math.hypot(cp.x - lineDragStart.x, cp.y - lineDragStart.y);
         if (dist > 0.1) {
+            pushUndo();
             charges.push({
                 type: "line", id: `line_${charges.length}`,
                 x1: lineDragStart.x, y1: lineDragStart.y,
@@ -806,6 +857,7 @@ function updateChargeList() {
         });
         div.querySelector(".delete-btn").addEventListener("click", e => {
             e.stopPropagation();
+            pushUndo();
             charges.splice(i, 1);
             if (selectedIdx >= charges.length) selectedIdx = charges.length - 1;
             refreshUI();
@@ -863,6 +915,7 @@ function updatePropsPanel() {
                 sel.appendChild(o);
             });
             sel.addEventListener("change", () => {
+                pushUndo();
                 c[f.key] = sel.value;
                 draw();
             });
@@ -873,7 +926,11 @@ function updatePropsPanel() {
             input.value = c[f.key];
             if (f.step) input.step = f.step;
             if (f.min !== undefined) input.min = f.min;
+            input.addEventListener("focus", () => {
+                input._undoPushed = false;
+            });
             input.addEventListener("input", () => {
+                if (!input._undoPushed) { pushUndo(); input._undoPushed = true; }
                 if (f.type === "number") {
                     c[f.key] = parseFloat(input.value) || 0;
                 } else {
@@ -939,6 +996,8 @@ document.getElementById("chk-robot-preview").addEventListener("change", e => {
 document.getElementById("btn-zoom-in").addEventListener("click", () => { scale *= 1.2; draw(); });
 document.getElementById("btn-zoom-out").addEventListener("click", () => { scale /= 1.2; draw(); });
 document.getElementById("btn-zoom-fit").addEventListener("click", () => { fitToWindow(); draw(); });
+document.getElementById("btn-undo").addEventListener("click", undo);
+document.getElementById("btn-redo").addEventListener("click", redo);
 
 // Pinch-to-zoom (trackpad / touch) — zoom toward the cursor position
 canvas.addEventListener("wheel", e => {
@@ -997,6 +1056,7 @@ document.getElementById("file-input").addEventListener("change", e => {
     reader.onload = ev => {
         try {
             const data = JSON.parse(ev.target.result);
+            pushUndo();
             charges = data.charges || [];
             mapSettings.name = data.name || "Imported";
             mapSettings.forceGain = data.forceGain ?? 1;
@@ -1021,6 +1081,7 @@ document.getElementById("file-input").addEventListener("change", e => {
 
 document.getElementById("btn-clear").addEventListener("click", () => {
     if (confirm("Delete all charges?")) {
+        pushUndo();
         charges = [];
         selectedIdx = -1;
         refreshUI();
@@ -1033,11 +1094,19 @@ document.addEventListener("keydown", e => {
     if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
     if (e.key === "Delete" || e.key === "Backspace") {
         if (selectedIdx >= 0) {
+            pushUndo();
             charges.splice(selectedIdx, 1);
             selectedIdx = Math.min(selectedIdx, charges.length - 1);
             refreshUI();
             draw();
         }
+    }
+    // Undo / Redo
+    if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
+        e.preventDefault(); undo();
+    }
+    if ((e.metaKey || e.ctrlKey) && (e.key === "Z" || e.key === "y")) {
+        e.preventDefault(); redo();
     }
     if (e.key === "Escape") {
         mode = "select";
@@ -1097,6 +1166,7 @@ const GAME_OBSTACLES = {
 
 /** Add 4 repulsive line charges along the field perimeter. */
 function addWalls() {
+    pushUndo();
     const wallIds = ["wall_bottom", "wall_top", "wall_left", "wall_right"];
     // Remove existing walls (by id prefix) to allow re-generation on field switch
     charges = charges.filter(c => !wallIds.includes(c.id));
@@ -1115,6 +1185,7 @@ function addObstacles() {
     if (!currentField) return;
     const factory = GAME_OBSTACLES[currentField.year];
     if (!factory) return;
+    pushUndo();
     const newObstacles = factory();
     // Remove existing obstacles with matching id prefixes to allow re-generation
     const newIds = new Set(newObstacles.map(c => c.id));
