@@ -18,8 +18,6 @@ joystick input. The driver always has authority — they can push through forces
 ## Repository Layout
 ```
 refinery-forcefield/
-├── .github/
-│   └── copilot-instructions.md      ← you are here
 ├── editor/                           ← web-based visual preset editor (HTML/JS/CSS)
 │   ├── index.html
 │   ├── style.css
