@@ -6,6 +6,18 @@ ForceField lets you place invisible charges on the field — walls that repel, s
 
 > Part of **The REFINERY** by [BioNanomics](https://github.com/BioNanomics) — tools and libraries for FRC teams.
 
+| Force Lines | Heatmap |
+|:-----------:|:-------:|
+| ![Force lines visualization](screenshots/field-forcelines.png) | ![Heatmap visualization](screenshots/field-heatmap.png) |
+
+Features:
+- Drag-and-drop placement of point, line, and radial charges
+- Real-time force arrow and heatmap visualization
+- Robot preview overlay with swerve module corners
+- Export/import JSON presets (same format used by `ForceFieldMap`)
+- **Multi-year field images** — switch between FRC seasons via dropdown
+
+
 ## Coordinate System
 
 ForceField uses the **WPILib standard coordinate system**, which is shared by all major FRC tools:
@@ -293,17 +305,6 @@ cd editor && python3 -m http.server 8765
 ```
 
 Then open [http://localhost:8765](http://localhost:8765).
-
-| Force Lines | Heatmap |
-|:-----------:|:-------:|
-| ![Force lines visualization](screenshots/field-forcelines.png) | ![Heatmap visualization](screenshots/field-heatmap.png) |
-
-Features:
-- Drag-and-drop placement of point, line, and radial charges
-- Real-time force arrow and heatmap visualization
-- Robot preview overlay with swerve module corners
-- Export/import JSON presets (same format used by `ForceFieldMap`)
-- **Multi-year field images** — switch between FRC seasons via dropdown
 
 ### Adding a New Field Year
 
